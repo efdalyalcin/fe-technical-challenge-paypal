@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useCallback } from 'react'
 import ReactDOM from 'react-dom'
-import { connect, FormikContextType } from 'formik'
+import { useFormikContext } from 'formik'
 import type PayPal from '@paypal/paypal-js'
+
 const buttonStyle = {
   color: 'gold',
   fundingicons: false,
@@ -10,58 +11,64 @@ const buttonStyle = {
   size: 'responsive',
   tagline: false,
 } as PayPal.PayPalButtonsComponentOptions['style']
+
 type PayPalButtonComponent = React.ComponentType<
   PayPal.PayPalButtonsComponentOptions & { commit: boolean; env: string }
 >
-type PayPalButtonProps = { formik: FormikContextType<PayPalFormValues> }
-
-class PayPalButton extends React.Component<PayPalButtonProps> {
-  createOrderOrBillingAgreement = async () => {
-    this.props.formik.submitForm() // submit will call api with form values and inject _paypal_token into the form values
-    await this.sleepUntilSubmitted()
-    if (this.props.formik.isValid) this.props.formik.setSubmitting(true)
-    return this.props.formik.values._paypal_token!
-  }
-
-  sleepUntilSubmitted = async () => {
-    const sleep = async (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-    while (this.props.formik.isSubmitting) {
-      await sleep(100)
-    }
-  }
-
-  onApprove = async () => {
-    // do something on success
-  }
-
-  render = () => {
-    const paypal = window['paypal']
-    if (!paypal) return null
-
-    const Button = (paypal.Buttons! as any).driver('react', {
-      React,
-      ReactDOM,
-    }) as PayPalButtonComponent
-    const { isSubmitting } = this.props.formik
-
-    return (
-      <div>
-        <div style={(isSubmitting && { display: 'none' }) || {}}>
-          <Button
-            commit
-            env="sandbox"
-            createBillingAgreement={this.createOrderOrBillingAgreement}
-            onApprove={this.onApprove}
-            onCancel={() => this.props.formik.setSubmitting(false)}
-            onError={() => this.props.formik.setSubmitting(false)}
-            style={buttonStyle}
-          />
-        </div>
-      </div>
-    )
-  }
-}
 
 export type PayPalFormValues = { _paypal_token?: string }
 
-export default connect<{}, PayPalFormValues>(PayPalButton)
+const paypal = window['paypal']
+const Button = (paypal?.Buttons! as any).driver('react', {
+  React,
+  ReactDOM,
+}) as PayPalButtonComponent
+
+function PayPalButton() {
+  // useFormikContext is used to remove the HOC
+  const { isValid, values, isSubmitting, submitForm, setSubmitting } = useFormikContext<PayPalFormValues>()
+
+  // all the other functions created are passed to Button component and this one is passed to other callback,
+  // so all of them are wrapped to useCallback to prevent unnecessary triggers
+  const sleepUntilSubmitted = useCallback(async () => {
+    const sleep = async (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+    while (isSubmitting) {
+      await sleep(100)
+    }
+  }, [])
+
+  const createOrderOrBillingAgreement = useCallback(async () => {
+    submitForm() // submit will call api with form values and inject _paypal_token into the form values
+    await sleepUntilSubmitted()
+    if (isValid) setSubmitting(true)
+    return values._paypal_token!
+  }, [submitForm, sleepUntilSubmitted, isValid, values])
+
+  const onApprove = useCallback(async () => {
+    // do something on success
+  }, [])
+
+  const onCancel = useCallback(() => {
+    setSubmitting(false)
+  }, [])
+
+  const onError = useCallback(() => {
+    setSubmitting(false)
+  }, [])
+
+  return (
+    <div style={isSubmitting ? { display: 'none' } : {}}>
+      <Button
+        commit
+        env="sandbox"
+        createBillingAgreement={createOrderOrBillingAgreement}
+        onApprove={onApprove}
+        onCancel={onCancel}
+        onError={onError}
+        style={buttonStyle}
+      />
+    </div>
+  )
+}
+
+export default PayPalButton
